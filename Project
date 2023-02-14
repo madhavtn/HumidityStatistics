@@ -57,7 +57,7 @@ class Aggregator extends Actor with ActorLogging{
  println(s"No of processed Measurements: $processedMeasure")
  println(s"No of failed Measurements: $failedMeasure")
  println("Sensors with highest average humidity")
- println("Sensor-Id,min, avg, max ")
+ println("Sensor-Id,max, avg, min ")
 
  implicit val ordering: Ordering[Int] = Ordering.fromLessThan(_>_)
  /**
@@ -120,7 +120,7 @@ No of processed files: 2
 No of processed Measurements: 500
 No of failed Measurements: 1
 Sensors with highest average humidity
-Sensor-Id,min, avg, max
+Sensor-Id,max, avg, min
 S3,95,50,0
 S2,99,50,0
 S1,99,49,1
