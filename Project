@@ -1,0 +1,133 @@
+import akka.actor.{Actor, ActorLogging, ActorSystem, Props}
+import akka.stream.ActorMaterializer
+import akka.stream.scaladsl.{FileIO, Framing, Sink}
+import akka.util.{ByteString, Timeout}
+import java.nio.file.Paths
+import scala.util.Random
+
+/**
+ * Defining message handler
+ */
+object Aggregator{
+ case class SensorData(sensorId: String, humidity: String)
+ case object ProcessOutput
+ case object NewFile
+}
+
+/**
+ * Creating Actor class to handle the messages
+ */
+class Aggregator extends Actor with ActorLogging{
+ import Aggregator._
+ override def receive: Receive = online(Map(),1,0,0)
+
+ def online(sensorData: Map[String,List[Int]], processedFiles: Int, processedMeasure: Int, failedMeasure: Int): Receive = {
+ /**
+ * case handler for processing data
+ */
+ case SensorData(sensorId,humidity) =>
+ if(humidity != "NaN"){
+ if(sensorData.contains(sensorId)){
+ val humidityAsInt = humidity.toInt
+ val listOption = sensorData.get(sensorId)
+ listOption.foreach{list =>
+ val newList = list :+ humidityAsInt
+ val newSensorData = sensorData + (sensorId -> newList)
+ context.become(online(newSensorData,processedFiles,processedMeasure + 1,failedMeasure))
+ }}else{
+ val newSensorData = sensorData + (sensorId -> List(humidity.toInt))
+ context.become(online(newSensorData,processedFiles,processedMeasure + 1,failedMeasure))
+ }
+ }else if(humidity == "NaN"){
+ if(! sensorData.contains(sensorId)) {
+ val newSensorData = sensorData + (sensorId -> List())
+ context.become(online(newSensorData, processedFiles, processedMeasure, failedMeasure + 1))
+ }else{
+ context.become(online(sensorData, processedFiles, processedMeasure, failedMeasure + 1))
+ }
+ }
+ case NewFile =>
+ context.become(online(sensorData,processedFiles + 1,processedMeasure,failedMeasure))
+
+ /**
+ * case handler for output
+ */
+ case ProcessOutput =>
+ println(s"No of processed files: $processedFiles")
+ println(s"No of processed Measurements: $processedMeasure")
+ println(s"No of failed Measurements: $failedMeasure")
+ println("Sensors with highest average humidity")
+ println("Sensor-Id,min, avg, max ")
+
+ implicit val ordering: Ordering[Int] = Ordering.fromLessThan(_>_)
+ /**
+ * Filtering valid sensor values and sorting based on average
+ */
+ val nonEmptydataList = sensorData.toList.filter(_._2.nonEmpty).sortBy(data => data._2.sum/(data._2.size))
+ nonEmptydataList.foreach{ data =>
+ println(s"${data._1},${data._2.min},${data._2.sum/(data._2.size)},${data._2.max}")
+ }
+ /**
+ * Filtering out Sensor with empty list ( having only NaN values)
+ */
+ val emptyDataList = sensorData.toList.filter(_._2.isEmpty)
+ emptyDataList.foreach{ data =>
+ println(s"${data._1},NaN,NaN,NaN")
+ }
+
+ }
+}
+object SensorStatistics extends App{
+ import Aggregator._
+
+ /**
+ * Giving random sensor data to the application
+ */
+ val random = new Random()
+ implicit val system = ActorSystem("SensorStatistics")
+ implicit val materializer = ActorMaterializer()
+
+
+ val aggregator = system.actorOf(Props[Aggregator],"aggregator")
+
+ /**
+ * To extract data from a directory having csv files
+ */
+
+ FileIO.fromPath(Paths.get("a.csv"))
+ .via(Framing.delimiter(ByteString("\n"), 256, true).map(_.utf8String))
+ .runForeach{data =>
+ val seperatedData = data.split(",")
+ aggregator ! SensorData(seperatedData(0),seperatedData(1))
+ }
+
+ /**
+ * Giving random inputs to application
+ */
+
+ (1 to 100).foreach {_ =>
+ (1 to 5).foreach { num =>
+ aggregator ! SensorData(s"S$num", random.nextInt(100).toString)
+ }
+ }
+ aggregator ! NewFile
+ aggregator ! SensorData("S6","NaN")
+ aggregator ! ProcessOutput
+
+ /*
+ Sample Output
+No of processed files: 2
+No of processed Measurements: 500
+No of failed Measurements: 1
+Sensors with highest average humidity
+Sensor-Id,min, avg, max
+S3,95,50,0
+S2,99,50,0
+S1,99,49,1
+S5,99,49,2
+S4,98,47,2
+S6,NaN,NaN,NaN
+ */
+
+
+}
